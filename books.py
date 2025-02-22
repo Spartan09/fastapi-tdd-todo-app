@@ -1,4 +1,7 @@
-from fastapi import Body, FastAPI
+from typing import Optional
+from fastapi import FastAPI, Path, Query, HTTPException
+from pydantic import BaseModel, Field
+from starlette import status
 
 app = FastAPI()
 
@@ -18,6 +21,27 @@ class Book:
         self.rating = rating
         self.published_date = published_date
 
+class BookRequest(BaseModel):
+    id: Optional[int] = Field(description='ID is not needed on create', default=None)
+    title: str = Field(min_length=3)
+    author: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=100)
+    rating: int = Field(gt=-1, lt=6)
+    published_date: int = Field(gt=1999, lt=2031)
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "title": "A new book",
+                "author": "Author of the book",
+                "description": "A new description of a book",
+                "rating": 5,
+                "published_date": 2029
+            }
+        }
+    }
+
+
 BOOKS = [
     Book(1, 'Computer Science Pro', 'codingwithroby', 'A very nice book!', 5, 2030),
     Book(2, 'Be Fast with FastAPI', 'codingwithroby', 'A great book!', 5, 2030),
@@ -27,55 +51,67 @@ BOOKS = [
     Book(6, 'HP3', 'Author 3', 'Book Description', 1, 2026)
 ]
 
-@app.get("/books")
+@app.get("/books", status_code=status.HTTP_200_OK)
 async def read_all_books():
     return BOOKS
 
-@app.get("/books/{book_title}")
-async def read_book(book_title: str):
+
+@app.get("/books/{book_id}", status_code=status.HTTP_200_OK)
+async def read_book(book_id: int = Path(gt=0)):
     for book in BOOKS:
-        title = book.get('title')
-        if title and title.casefold() == book_title.casefold():
+        if book.id == book_id:
             return book
+    raise HTTPException(status_code=404, detail='Item not found')
 
 
-@app.get("/books/")
-async def read_category_by_query(category: str):
+@app.get("/books/", status_code=status.HTTP_200_OK)
+async def read_book_by_rating(book_rating: int = Query(gt=0, lt=6)):
     books_to_return = []
     for book in BOOKS:
-        book_category = book.get('category')
-        if book_category and book_category.casefold() == category.casefold():
+        if book.rating == book_rating:
             books_to_return.append(book)
     return books_to_return
 
-@app.get("/books/{book_author}/")
-async def read_author_category_by_query(book_author: str, category: str):
+
+
+@app.get("/books/publish/", status_code=status.HTTP_200_OK)
+async def read_books_by_publish_date(published_date: int = Query(gt=1999, lt=2031)):
     books_to_return = []
     for book in BOOKS:
-        current_book_author = book.get('author')
-        current_book_category = book.get('category')
-        if (current_book_author and current_book_author.casefold() == book_author.casefold()) and \
-                (current_book_category and current_book_category.casefold() == category.casefold()):
+        if book.published_date == published_date:
             books_to_return.append(book)
-
     return books_to_return
 
-@app.post("/books/create_book")
-async def create_book(new_book=Body()):
-    BOOKS.append(new_book)
 
-@app.put("/books/update_book")
-async def update_book(updated_book=Body()):
+@app.post("/create-book", status_code=status.HTTP_201_CREATED)
+async def create_book(book_request: BookRequest):
+    new_book = Book(**book_request.model_dump())
+    BOOKS.append(find_book_id(new_book))
+
+
+def find_book_id(book: Book):
+    book.id = 1 if len(BOOKS) == 0 else BOOKS[-1].id + 1
+    return book
+
+
+@app.put("/books/update_book", status_code=status.HTTP_204_NO_CONTENT)
+async def update_book(book: BookRequest):
+    book_changed = False
     for i in range(len(BOOKS)):
-        current_title = BOOKS[i].get('title')
-        if current_title and current_title.casefold() == updated_book.get('title', '').casefold():
-            BOOKS[i] = updated_book
+        if BOOKS[i].id == book.id:
+            BOOKS[i] = Book(**book.model_dump())
+            book_changed = True
+    if not book_changed:
+        raise HTTPException(status_code=404, detail='Item not found')
 
 
-@app.delete("/books/delete_book/{book_title}")
-async def delete_book(book_title: str):
+@app.delete("/books/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_book(book_id: int = Path(gt=0)):
+    book_changed = False
     for i in range(len(BOOKS)):
-        current_title = BOOKS[i].get('title')
-        if current_title and current_title.casefold() == book_title.casefold():
+        if BOOKS[i].id == book_id:
             BOOKS.pop(i)
+            book_changed = True
             break
+    if not book_changed:
+        raise HTTPException(status_code=404, detail='Item not found')
